@@ -1,31 +1,46 @@
+// internal/user/repo_integration_postgres_test.go
 package user
 
-// import (
-// 	"testing"
+import (
+	"context"
+	"fmt"
+	"testing"
 
-// 	"github.com/stretchr/testify/require"
-// 	"gorm.io/driver/sqlite"
-// 	"gorm.io/gorm"
-// )
+	"github.com/stretchr/testify/require"
+	"github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go/wait"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
+)
 
-// func newTestDB(t *testing.T) *gorm.DB {
-// 	t.Helper()
-// 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-// 	require.NoError(t, err)
-// 	require.NoError(t, db.AutoMigrate(&User{}))
-// 	return db
-// }
+func TestRepo_Create_UniqueEmail_Postgres(t *testing.T) {
+	ctx := context.Background()
+	req := testcontainers.ContainerRequest{
+		Image:        "postgres:17",
+		Env:          map[string]string{"POSTGRES_USER": "postgres", "POSTGRES_PASSWORD": "postgres", "POSTGRES_DB": "postgres"},
+		ExposedPorts: []string{"5432/tcp"},
+		WaitingFor:   wait.ForListeningPort("5432/tcp"),
+	}
+	pgC, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+		ContainerRequest: req, Started: true,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = pgC.Terminate(ctx) })
 
-// func TestRepo_Create_And_UniqueEmail(t *testing.T) {
-// 	db := newTestDB(t)
-// 	repo := NewGormRepository(db)
+	host, _ := pgC.Host(ctx)
+	port, _ := pgC.MappedPort(ctx, "5432/tcp")
 
-// 	u1 := &User{Email: "i@a.com", Name: "Ice", PasswordHash: "hash"}
-// 	require.NoError(t, repo.Create(u1))
-// 	require.NotZero(t, u1.ID)
+	dsn := fmt.Sprintf("host=%s port=%s user=postgres password=postgres dbname=postgres sslmode=disable TimeZone=Asia/Bangkok", host, port.Port())
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&User{}))
 
-// 	u2 := &User{Email: "i@a.com", Name: "Dup", PasswordHash: "hash2"}
-// 	err := repo.Create(u2)
-// 	require.Error(t, err)
-// 	require.ErrorIs(t, err, ErrDuplicateEmail)
-// }
+	repo := NewGormRepository(db)
+
+	u1 := &User{Email: "i@a.com", Name: "Ice", PasswordHash: "hash"}
+	require.NoError(t, repo.Create(u1))
+
+	u2 := &User{Email: "i@a.com", Name: "Dup", PasswordHash: "hash2"}
+	err = repo.Create(u2)
+	require.ErrorIs(t, err, ErrDuplicateEmail)
+}
